@@ -1,5 +1,11 @@
 # OpenAPI Plan For KtKit
 
+Related docs:
+
+- [`01-ktkit-current-state.md`](./01-ktkit-current-state.md): current KtKit route/runtime constraints and example setup
+- [`02-ktor-openapi-references.md`](./02-ktor-openapi-references.md): Ktor OpenAPI, `.describe {}`, Swagger UI, and integration constraints
+- [`03-kotlinx-schema-references.md`](./03-kotlinx-schema-references.md): schema-model separation and kotlinx-schema references
+
 ## Goal
 
 Implement a KtKit-native API contract layer that can export OpenAPI for JVM/Ktor without breaking KMP support or the current `AbstractRestHandler` authoring style.
@@ -16,6 +22,41 @@ The plan must preserve these existing properties:
 - KtKit already normalizes multiple failure styles at runtime: `Raise<ErrorSpec>`, returned `Either<ErrorSpec, T>`, `Result<T>`, and thrown `RuntimeError`.
 - Downstream apps may translate internal errors to public errors at the route boundary through a route-local wrapper such as `exposePublicly(log)`.
 - Core contract and schema logic must stay in `commonMain`. OpenAPI rendering can be JVM-only.
+
+## MVP Agent Start
+
+This section is the concise implementation brief for an agent starting the first MVP. The rest of the document explains
+the reasoning and later phases.
+
+Build only this first:
+
+1. Add a minimal contract IR in `ktkit/src/commonMain/kotlin/io/github/smyrgeorge/ktkit/api/contract/`:
+   `EndpointContract`, `SuccessSpec`, `ParamSpec`, `ParamLocation`, `BodySpec` if needed, and `RouteContractRegistry`.
+2. Use `kotlinx.serialization.KSerializer<T>` or a small KMP-safe schema token around it for the first type capture path.
+3. Add optional `contract` parameters to the existing `AbstractRestHandler.GET/POST/PUT/PATCH/DELETE` helpers.
+4. Make those helpers call `RouteContractRegistry.register(...)` during route registration when `contract != null`.
+5. Add one app-scoped registry owned by `Application`, and finalize it after the existing handler auto-registration block in
+   `Application.Configurer.configure()`.
+6. Add the JVM-only OpenAPI module only after the registry path works. The first exporter may emit a small OpenAPI JSON
+   subset: paths, methods, summary, parameters, and one success response.
+7. Update one route in `example/` to use `contract = ...` and prove the registry contains that contract.
+
+Do not build these in the MVP:
+
+- KSP annotations
+- compiler-plugin inference
+- Ktor `.describe {}` integration
+- Redoc or Swagger UI
+- full schema coverage
+- automatic inference from route handler bodies
+- multiple success variants or streaming responses
+
+The MVP acceptance check is narrow:
+
+- existing routes still compile without contracts
+- one documented example route registers a contract
+- the registry can be finalized and read as an immutable snapshot
+- on JVM, the snapshot can be converted into a minimal `/openapi.json` document in the optional module
 
 ## Primary Design Decisions
 
@@ -211,6 +252,108 @@ Reason:
 - keeps `ktkit` KMP-safe
 - isolates Ktor OpenAPI experimental/runtime dependencies
 - keeps OpenAPI export optional
+
+## Core vs OpenAPI Module Responsibilities
+
+The implementation should be split so that `ktkit` core can carry portable route contracts without forcing OpenAPI
+generation, Redoc, Swagger UI, or JVM-only dependencies onto every application.
+
+| Area | `ktkit` core | `ktkit-ktor-openapi` or JVM-only module |
+| --- | --- | --- |
+| Contract declaration | Owns `contract<T> { ... }`, `EndpointContract`, parameter/body/success/error specs, and error sets. | May add convenience config around export, but should not define the canonical contract model. |
+| Route authoring | Keeps the existing `AbstractRestHandler` style and uppercase helpers like `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`. | Does not replace route authoring. It only consumes registered contracts. |
+| Contract registration | `GET/POST/...` call `RouteContractRegistry.register(...)` when a non-null contract is supplied. App code should not call `register()` manually. | Reads the finalized registry snapshot. It should not be required for registration to work. |
+| Registry lifetime | Owns one app-scoped `RouteContractRegistry`, registered in application DI or otherwise held by the `Application` instance. Avoid a process-global Kotlin `object`. | Uses the app-scoped registry instance provided by core. |
+| Registry synchronization | MVP can use `mutableListOf` because registration is startup-only. Add a finalize/freeze guard so writes after finalization fail fast. | Treats the registry as read-only. |
+| Registry finalization | `Application.Configurer.configure()` calls `finalizeRoutes()` after the `routing { di.getAll<AbstractRestHandler>().forEach { with(it) { routes() } } }` block completes. | Runs after finalization through an extension hook and generates from the stable snapshot. |
+| Application bootstrap integration | Keeps current `Application(..., configure = { ... }).start()` pattern. Do not require downstream apps to call a separate `installKtKit(...)`. | Provides optional `openApi { ... }` config as an extension when the module is imported. |
+| Optional feature hook | Provides a generic post-route hook such as `afterRoutes { ... }` or an equivalent internal extension point, executed after route registration and registry finalization. | Implements `Application.Configurer.openApi { ... }` by registering an `afterRoutes` block that installs `/openapi.json` and optional docs UI. |
+| When module is absent | Contracts can still compile and register in core. No OpenAPI generation, `/openapi.json`, `/docs`, Redoc, Swagger UI, or OpenAPI config API is available. | Not present. No dependency or runtime cost. |
+| OpenAPI generation | No OpenAPI DTOs or Ktor OpenAPI classes in the core API surface. | Converts `RouteContractRegistry` snapshots into OpenAPI JSON. Prefer direct generation from KtKit IR first. |
+| Ktor `.describe {}` | Core should not require it. It can optionally attach metadata later only as an implementation detail. | May bridge KtKit contracts into Ktor `.describe {}` later if it proves useful, but this is not the v1 source of truth. |
+| `/openapi.json` hosting | Does not host by default. May expose enough hooks for optional modules to install routes after finalization. | Hosts `/openapi.json` when `openApi { enabled = true }` is configured. |
+| Docs UI | No Redoc or Swagger UI dependency. | Can host Redoc for read-only docs and Swagger UI for interactive bearer-token testing. |
+| Auth in docs | Core documents auth requirements through contract/security metadata only. | Emits OpenAPI security schemes, for example bearer auth. Swagger UI can provide an `Authorize` button; Redoc Community Edition should be treated as read-only. |
+| User overrides | Core should expose stable hooks, not OpenAPI-specific config. | `openApi { ... }` should allow overriding title/version, JSON path, Redoc path, Swagger path, servers, auto route installation, and generator options. |
+
+Recommended optional-module shape:
+
+```kotlin
+Application(
+    name = "...",
+    conf = Application.Conf(),
+    configure = {
+        openApi {
+            enabled = true
+            title = "Example API"
+            version = "1.0.0"
+            jsonPath = "/openapi.json"
+            docs = OpenApiDocs.Redoc(path = "/docs")
+        }
+    }
+).start()
+```
+
+If `ktkit-ktor-openapi` is not imported, `openApi { ... }` should not compile. This is preferable to a silent no-op
+because it keeps optional dependencies explicit.
+
+Recommended override shape:
+
+```kotlin
+openApi {
+    enabled = true
+    autoInstallRoutes = false
+}
+```
+
+With `autoInstallRoutes = false`, application code can host the generated document manually through normal Ktor
+configuration while still reusing the generator and finalized registry.
+
+## Registry Lifecycle
+
+Registration should follow the existing KtKit bootstrap rather than introducing a new application install style.
+
+Current route installation happens in `Application.Configurer.configure()`:
+
+```kotlin
+routing {
+    di.getAll<AbstractRestHandler>().forEach {
+        log.info("Registering REST Handler: ${it::class.simpleName}")
+        with(it) { routes() }
+    }
+}
+```
+
+The contract lifecycle should therefore be:
+
+1. `Application` creates or owns one app-scoped `RouteContractRegistry`.
+2. `Application.Configurer.configure()` registers that registry in DI or exposes it through a scoped route-registration context.
+3. Each `AbstractRestHandler.GET/POST/...` helper calls `register(...)` when `contract` is supplied.
+4. After all handler `routes()` calls complete, `Application.Configurer.configure()` calls `finalizeRoutes()`.
+5. The OpenAPI module, if enabled, installs `/openapi.json` and docs UI after finalization.
+6. The docs generator reads only the finalized snapshot.
+
+This keeps downstream app setup minimal. The example app should continue to register handlers only through DI:
+
+```kotlin
+di {
+    singleOf(::TestRestHandler) { bind<AbstractRestHandler>() }
+}
+```
+
+Route authors opt in per endpoint by adding contract metadata:
+
+```kotlin
+GET("/items/{id}", contract = contract<ItemDto> { ... }) {
+    ...
+}
+```
+
+They should not manually call `register()` or `finalizeRoutes()`.
+
+`postConfigure` should not be part of the registry write path. It runs after `Configurer.configure()` and is better suited
+for startup side effects or reading already-finalized metadata. OpenAPI route installation should happen inside the
+normal configure flow after route registration and before or through a dedicated post-route hook.
 
 ## Phased Implementation
 
