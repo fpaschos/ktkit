@@ -4,6 +4,11 @@
 
 Implement a KtKit-native API contract layer that can export OpenAPI for JVM/Ktor without breaking KMP support or the current `AbstractRestHandler` authoring style.
 
+Success for this plan means two things:
+
+- the work is implementable incrementally without a large speculative rewrite
+- the document reflects the real cost drivers and hidden work, not just the desired end-state API
+
 The plan must preserve these existing properties:
 
 - KtKit routes are authored through handler classes and uppercase helpers like `GET` and `POST`, not through a separate routing DSL.
@@ -33,7 +38,23 @@ Split the implementation into:
 
 Do not make OpenAPI classes part of the common API surface.
 
-### 3. Error model
+### 3. Type and schema capture
+
+Type and schema capture must be a first-class part of the vanilla design, not a later refinement.
+
+Reason:
+
+- the current `Route.GET/POST/...` helpers are generic but not reified, so `GET<T>` alone cannot recover `T` at runtime: `ktkit/src/commonMain/kotlin/io/github/smyrgeorge/ktkit/api/rest/AbstractRestHandler.kt:354`
+- there is no existing KtKit commonMain type-introspection layer that can be retrofitted after the IR is already designed
+- OpenAPI export is only as good as the schema/type tokens captured by the contract model
+
+Therefore:
+
+- every success/body/parameter/error payload spec must capture enough information up front to derive a schema later
+- the vanilla API should prefer explicit schema capture through `contract<T>`, `body<T>()`, `pathParam<T>()`, and similar builders
+- an inline reified helper can be added later for ergonomics, but the core IR must not depend on JVM-only reflection
+
+### 4. Error model
 
 Public API errors are not always identical to service/internal errors.
 
@@ -47,7 +68,7 @@ Therefore:
 - `ktkit` should own the contract mechanism
 - application code should own app-specific public error sets and translator wrappers
 
-### 4. Plugin strategy
+### 5. Plugin strategy
 
 Implementation must be usable without KSP or compiler plugins.
 
@@ -56,6 +77,17 @@ Recommended progression:
 1. Vanilla API first
 2. KSP second for boilerplate reduction
 3. Compiler-plugin inference later only for recognized KtKit DSL patterns
+
+### 6. Rollout style
+
+The implementation should be additive-first and migration-safe.
+
+Therefore:
+
+- existing `GET/POST/...` call sites must keep compiling without contract declarations
+- contract support should be introduced through overloads or optional parameters rather than by replacing the current route API
+- the OpenAPI exporter should live in a dedicated JVM-only module from the start
+- the contract IR and reusable contract DSL should remain in `commonMain`
 
 ## Target API
 
@@ -106,7 +138,7 @@ override fun Route.routes() {
 Properties:
 
 - no KSP required
-- no duplicate `ok()` declaration; success schema comes from `GET<CatalogItem>` or `contract<CatalogItem>`
+- no duplicate `ok()` declaration; in the vanilla path the success schema comes from `contract<CatalogItem>`
 - parameter handles are reusable for docs and extraction
 - error sets are reusable across endpoints
 
@@ -142,8 +174,10 @@ GET<CatalogItem>("/{itemId}") {
 Notes:
 
 - KSP can generate error sets and contract fragments from annotations.
+- an inline reified overload could later allow `GET<T>` to supply success schema ergonomically, but that is not a requirement for the first ship
 - A compiler plugin would be needed if the body itself should implicitly contribute parameter metadata from calls like `pathVariable("store").asEnum<Store>()`.
 - This final form is the aspiration, not the required first ship.
+- v1 should stay DSL-only; annotations belong to later KSP ergonomics.
 
 ## Proposed Code Structure
 
@@ -164,13 +198,13 @@ Suggested files:
 - `ParamHandle.kt`
 - `ContractDsl.kt`
 - `RouteContractRegistry.kt`
-- `PublicEndpoint.kt` only if runtime-visible annotations are kept in the vanilla layer
+- do not introduce annotation types into the v1 surface
 
-### Optional new JVM package or module
+### New JVM-only module
 
 Preferred:
 
-- add a dedicated module later, for example `ktkit-ktor-openapi`
+- add a dedicated module, for example `ktkit-ktor-openapi`
 
 Reason:
 
@@ -178,13 +212,27 @@ Reason:
 - isolates Ktor OpenAPI experimental/runtime dependencies
 - keeps OpenAPI export optional
 
-If a separate module is too much for phase 1, start in:
-
-- `ktkit/src/jvmMain/kotlin/io/github/smyrgeorge/ktkit/api/openapi/`
-
-and extract later.
-
 ## Phased Implementation
+
+### Phase 0. Spike the hard parts first
+
+Before building the full DSL, prove the two highest-risk seams with a minimal throwaway prototype:
+
+- capture schema/type information for one `@Serializable` success type and one parameter type in `commonMain`
+- register one route contract through `GET(..., contract = ...)` and verify it can be discovered later from a KtKit-owned registry
+
+Exit criteria:
+
+- no JVM reflection is required for the prototype
+- the prototype works without breaking an existing handler
+- the chosen schema token shape is good enough to continue with the real IR
+
+If this spike fails cleanly, revise the API before investing in the full DSL.
+
+Milestone target:
+
+- update the example app with one catalog-style endpoint
+- focus the first milestone on one endpoint end to end
 
 ### Phase 1. Contract IR in commonMain
 
@@ -196,12 +244,25 @@ Implement:
 - `SuccessSpec<T>`
 - `ErrorResponseSpec<E : ErrorSpec>`
 - `ErrorSet`
+- a KMP-safe schema token abstraction backed initially by `kotlinx.serialization`
 
 Constraints:
 
 - no OpenAPI classes
 - no Ktor-specific classes
-- all generic payload specs must carry enough type/schema info to map later
+- phase 1 is not complete until all generic payload specs carry enough type/schema info to map later
+- do not defer schema capture to a later phase; the IR shape depends on it
+
+Preferred v1 approach:
+
+- capture `kotlinx.serialization`-backed type/schema information at builder time
+- store enough metadata to derive JSON Schema or OpenAPI schemas later without JVM reflection
+- avoid introducing `kotlinx-schema` as a required dependency in the first ship
+
+Delivery note:
+
+- phase 1 should target only the subset of schema capture needed by the first example endpoints
+- do not try to solve every serialization edge case before the first registry-to-OpenAPI path is working
 
 ### Phase 2. Reusable parameter handles
 
@@ -229,6 +290,11 @@ These helpers should reuse KtKit parsing semantics currently implemented by `Htt
 - `ktkit/src/commonMain/kotlin/io/github/smyrgeorge/ktkit/api/rest/HttpContext.kt:118`
 - `ktkit/src/commonMain/kotlin/io/github/smyrgeorge/ktkit/api/rest/HttpContext.kt:131`
 
+Design constraint:
+
+- parameter handles should be thin wrappers over existing `HttpContext` extraction and parsing behavior, not a parallel parsing system
+- missing-parameter, enum parsing, and primitive conversion behavior must stay aligned with `HttpContext.Var`
+
 ### Phase 3. Route overloads and contract attachment
 
 Extend `AbstractRestHandler` verb helpers so they can accept an optional contract object.
@@ -252,12 +318,16 @@ GET(
 
 Implementation detail:
 
-- attach route contract metadata to the Ktor `Route` during registration
+- populate a KtKit-owned route contract registry during route registration
+- attach contract metadata to Ktor `Route` only as an implementation detail if that helps debugging or later integration
 - preserve all current runtime behavior
+- make OpenAPI export read from the KtKit registry rather than depending on traversal of Ktor internals
+- keep the registry snapshot-oriented in v1
+- store base path and route-relative path separately in the registry, then export the combined final path
 
 ### Phase 4. Framework error defaults
 
-Auto-add framework-level response metadata during contract export or route registration.
+Auto-add framework-level response metadata during OpenAPI export.
 
 These should come from KtKit behavior, not route author boilerplate:
 
@@ -267,6 +337,16 @@ These should come from KtKit behavior, not route author boilerplate:
 - missing parameter -> `MissingParameter`
 - unsupported enum value -> `UnsupportedEnumValue`
 - common RFC 9457 response envelope -> `ApiError`
+
+Export rules:
+
+- apply framework defaults conditionally based on actual route behavior
+- document `401` only when an auth extractor is configured and no default-user path satisfies the route
+- document `403` only when KtKit role or permission checks are configured
+- document request-body parse failures only when a request body is declared
+- document missing-parameter and unsupported-enum failures only when declared params can produce them
+- merge framework and declared public errors when they represent different causes for the same status
+- perform best-effort deduplication when variants collapse to the same documented shape
 
 Relevant code:
 
@@ -280,22 +360,15 @@ Add reusable error groups for public endpoint contracts.
 
 App ownership:
 
-- KtKit owns `ErrorSet` and `@PublicEndpoint` / contract APIs.
+- KtKit owns `ErrorSet` and the contract DSL APIs.
 - application code owns `PublicCatalogErrors`, translator wrappers, and app-specific public error hierarchies.
 
-### Phase 6. Schema abstraction in commonMain
+V1 rule:
 
-Implement a KMP-safe schema abstraction first using `kotlinx.serialization` descriptors.
+- manually declared public error sets are sufficient
+- translator-wrapper ergonomics belong later
 
-Do not make `kotlinx-schema` a hard dependency for v1.
-
-Why:
-
-- KtKit already depends on `kotlinx.serialization`: `ktkit/build.gradle.kts:24`
-- KtKit is multiplatform: `ktkit/build.gradle.kts:8`
-- `kotlinx-schema` architecture is useful as a model for separating introspection from output format, but KtKit should not block on it
-
-### Phase 7. JVM OpenAPI adapter
+### Phase 6. JVM OpenAPI adapter
 
 Add a JVM-only adapter that converts KtKit route contracts into OpenAPI.
 
@@ -309,7 +382,12 @@ Recommendation:
 - phase 1 adapter can generate the OpenAPI document directly from the KtKit IR
 - optional later integration can bridge to Ktor route annotations if that reduces duplication or improves UI integration
 
-### Phase 8. Serving documentation
+Delivery note:
+
+- generate the document directly from the KtKit IR first
+- do not spend time integrating with Ktor OpenAPI runtime metadata until the direct exporter is already useful
+
+### Phase 7. Serving documentation
 
 Expose:
 
@@ -318,7 +396,12 @@ Expose:
 
 These should live in JVM-only code or in a JVM-only module.
 
-### Phase 9. KSP support
+V1 rule:
+
+- `/openapi.json` must be application opt-in
+- docs UI is optional and should not block JSON export
+
+### Phase 8. KSP support
 
 Only after vanilla is complete.
 
@@ -331,7 +414,12 @@ KSP responsibilities:
 
 KSP should not be responsible for parsing handler bodies to infer arbitrary runtime semantics.
 
-### Phase 10. Optional compiler-plugin support
+Keep out of v1:
+
+- `@PublicEndpoint`
+- annotation-first contract authoring
+
+### Phase 9. Optional compiler-plugin support
 
 Only after the vanilla and KSP APIs are stable.
 
@@ -374,8 +462,108 @@ Avoid `ok()` in the common path.
 
 Preferred rule:
 
-- success payload comes from `GET<T>` or `contract<T>`
+- in the vanilla API, success payload comes from `contract<T>`
+- later inline-reified overloads may let `GET<T>` contribute the same metadata ergonomically
 - success status defaults to the same values already used by `AbstractRestHandler`
+
+### Keep reuse simple in v1
+
+V1 should rely on plain Kotlin reuse instead of first-class contract-fragment semantics.
+
+Recommended approach:
+
+- shared params and shared error sets can be plain values
+- common contract assembly can use normal helper functions
+- defer first-class fragment merge semantics until real usage shows what must be composed
+
+### Define the v1 contract scope explicitly
+
+The first ship should target the response shapes KtKit already handles well and defer the rest.
+
+Recommended v1 scope:
+
+- one primary success payload schema per endpoint
+- one primary success status code per verb helper, with explicit override support
+- `Unit` responses represented as empty response bodies
+- request bodies modeled for JSON payloads
+- one catalog-style example endpoint updated end to end in `example/`
+- RFC 9457 Problem Details envelope for errors, with typed `data` when known
+
+Explicitly defer unless a real use case appears during implementation:
+
+- streaming response schemas
+- non-JSON or streaming OpenAPI response support, even if runtime support already exists
+- multiple documented success payload variants for one endpoint
+- automatic inference from arbitrary handler body code without explicit contract builders
+
+### Estimate the actual cost drivers
+
+The expensive parts are not evenly distributed across the phases.
+
+Highest cost / highest uncertainty:
+
+- schema token design in `commonMain`
+- mapping `ErrorSpec` types into RFC 9457 Problem Details responses with typed `data` when known and opaque `data` fallback otherwise
+- designing a registry lifecycle that works cleanly with Ktor route registration
+- producing stable OpenAPI component names and references
+
+Moderate cost:
+
+- additive `GET/POST/...` overloads
+- reusable parameter handles built on top of `HttpContext.Var`
+- framework-default error response merging
+- snapshot tests and example app coverage
+
+Lower cost:
+
+- serving `/openapi.json`
+- optional docs UI wiring once JSON export already exists
+
+Implication:
+
+- the project cost is dominated by contract/schema design and export correctness, not by route overload plumbing
+- the plan should be tracked by working milestones rather than by file-count or class-count
+
+### Suggested delivery milestones
+
+Use milestones that produce demonstrable value and surface risk early.
+
+Milestone A:
+
+- the example app contains one catalog-style endpoint using the contract DSL
+- the route contract is captured in a registry
+- no OpenAPI generation yet
+
+Milestone B:
+
+- the same endpoint exports valid OpenAPI JSON
+- params, success payload, and one error set are represented
+- framework-default errors are merged in
+- `/openapi.json` is exposed through an explicit opt-in hook
+
+Milestone C:
+
+- multiple handlers can export through one application-level endpoint
+- example app demonstrates translated public errors
+- snapshot tests lock the output format
+
+Milestone D:
+
+- optional docs UI
+- optional KSP ergonomics
+
+If Milestone B proves more expensive than expected, stop there before adding KSP or UI work.
+
+### Make non-goals explicit
+
+To keep the plan honest about cost, the first implementation should not aim to:
+
+- infer contracts from arbitrary handler code
+- document every Ktor feature or content type
+- perfectly model every Kotlin type shape on day one
+- redesign the current KtKit routing style
+- solve compiler-plugin ergonomics in parallel with the vanilla API
+- introduce first-class contract-fragment composition before plain Kotlin reuse has been evaluated
 
 ### Module and dependency touchpoints
 
@@ -397,6 +585,7 @@ Root modules today:
 - `example`: `settings.gradle.kts:18`
 
 If a new JVM OpenAPI module is introduced, it should be added here.
+This plan assumes that module is part of the first implementation.
 
 ## Testing Strategy
 
@@ -409,14 +598,30 @@ Add tests for:
 - reusable `ErrorSet`
 - framework error default merging
 - schema extraction from `@Serializable` types
+- explicit serializer or schema-token capture for success, body, and parameter specs
 
 ### JVM tests
 
 Add tests for:
 
 - route metadata attachment during `GET/POST/...`
+- route registry population during `GET/POST/...`
 - OpenAPI generation from registered routes
 - public error translation scenarios with a test translator similar to `exposePublicly`
+- current success-status defaults for `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`
+- conditional framework-error inclusion during export
+- best-effort deduplication for same-status framework and public errors
+
+### Acceptance criteria
+
+Do not call the implementation complete until all of the following are true:
+
+- existing handlers still compile without contract declarations
+- one catalog-style example handler uses the new contract API end to end
+- `/openapi.json` is generated from the registry, not handwritten
+- generated OpenAPI includes at least params, success payload, explicit public errors, and framework-default errors
+- error docs preserve the RFC 9457 Problem Details envelope and include typed `data` when schema-known, otherwise opaque `data`
+- snapshot tests protect the exported document from accidental regressions
 
 ### Golden tests
 
@@ -442,10 +647,13 @@ Do not manually edit generated Dokka HTML under `docs/`; instead update KDoc on 
 ## Handoff Checklist
 
 - build the contract IR in `commonMain`
+- make schema/type capture part of the initial IR, not a follow-up phase
 - attach contracts to `Route` registration in `AbstractRestHandler`
+- back contract discovery with a KtKit-owned route registry
 - add reusable param handles
 - add reusable error sets
 - keep vanilla API fully usable without KSP
+- keep the vanilla success-schema source explicit through `contract<T>`
 - treat public error translation as endpoint-level contract semantics
 - implement JVM-only OpenAPI export after the common contract model is stable
-- add a new example under `example/` that demonstrates public error translation with a domain-neutral API surface
+- update the catalog example under `example/` to demonstrate the first end-to-end contract/OpenAPI path

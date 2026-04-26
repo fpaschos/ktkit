@@ -2,6 +2,12 @@
 
 This file captures the current KtKit code references and the downstream usage pattern that the implementation should preserve, without tying the plan to any internal project names.
 
+Related docs:
+
+- [`00-implementation-plan.md`](./00-implementation-plan.md): canonical implementation and rollout plan
+- [`02-ktor-openapi-references.md`](./02-ktor-openapi-references.md): Ktor-specific integration constraints
+- [`03-kotlinx-schema-references.md`](./03-kotlinx-schema-references.md): schema-architecture references
+
 ## KtKit repo references
 
 - `README.md:41` KtKit already advertises a bootstrap around Ktor with auto-registered REST handlers.
@@ -49,7 +55,7 @@ These references explain why public API contracts must not rely on one error pro
 
 ## Downstream pattern to preserve
 
-The implementation should support a common downstream pattern even though the public docs and examples should stay domain-neutral:
+The implementation should support a common downstream pattern even though the first milestone is allowed to use the catalog example in `example/`:
 
 - a route reads headers and path params directly inside the route body
 - a route-local wrapper such as `exposePublicly(log)` wraps the body
@@ -61,3 +67,4 @@ Implementation implication:
 
 - public errors should be declared at the endpoint boundary
 - translator wrappers such as `exposePublicly` should be treated as public contract boundaries
+- v1 may introduce contract-side parameter handles for documented endpoints, but existing direct request extraction helpers must remain valid for non-documented or legacy routes

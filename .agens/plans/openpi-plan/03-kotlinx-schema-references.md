@@ -2,6 +2,12 @@
 
 These references are not instructions to depend on `kotlinx-schema` immediately. They explain the architectural pattern worth reusing.
 
+Related docs:
+
+- [`00-implementation-plan.md`](./00-implementation-plan.md): canonical implementation and rollout plan
+- [`01-ktkit-current-state.md`](./01-ktkit-current-state.md): current KtKit route/runtime constraints
+- [`02-ktor-openapi-references.md`](./02-ktor-openapi-references.md): Ktor integration references
+
 ## 1. README overview
 
 Source:
@@ -38,7 +44,7 @@ Implementation implication:
 - KtKit should build:
   - endpoint contract/source metadata in `commonMain`
   - schema extraction from serializers in `commonMain`
-  - OpenAPI transformation in JVM code
+  - OpenAPI transformation in a JVM-only module
 
 This is the single most important design lesson from `kotlinx-schema`.
 
@@ -63,6 +69,7 @@ Phase 1:
 - use `kotlinx.serialization` directly because KtKit already depends on it:
   - `ktkit/build.gradle.kts:24`
   - `ktkit/build.gradle.kts:25`
+- prefer typed schema capture when serializers are known and opaque fallbacks when they are not, rather than blocking the whole feature on perfect schema coverage
 
 Phase 2:
 

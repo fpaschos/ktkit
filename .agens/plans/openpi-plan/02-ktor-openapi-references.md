@@ -2,6 +2,12 @@
 
 References below are from Ktor docs fetched during planning. They should guide integration choices, but KtKit should still own its contract model.
 
+Related docs:
+
+- [`00-implementation-plan.md`](./00-implementation-plan.md): canonical implementation and rollout plan
+- [`01-ktkit-current-state.md`](./01-ktkit-current-state.md): current KtKit route/runtime constraints
+- [`03-kotlinx-schema-references.md`](./03-kotlinx-schema-references.md): schema-model separation guidance
+
 ## 1. Runtime assembly model
 
 Source:
@@ -19,6 +25,7 @@ Implementation implication:
 
 - KtKit can safely own the contract/source model and transform into OpenAPI later.
 - Ktor OpenAPI should be treated as a renderer/adapter, not as the primary authoring model.
+- The current plan chooses direct export from the KtKit IR first, with any Ktor runtime metadata bridge deferred.
 
 ## 2. What Ktor can infer today
 
@@ -88,4 +95,5 @@ Key lines:
 Implementation implication:
 
 - KtKit should provide `/openapi.json` and optionally UI endpoints in JVM-only code.
-- phase 1 may generate JSON directly from KtKit's own contract IR even before wiring the Ktor UI plugins.
+- `/openapi.json` should be application opt-in in the first ship.
+- phase 1 should generate JSON directly from KtKit's own contract IR even before wiring the Ktor UI plugins.
