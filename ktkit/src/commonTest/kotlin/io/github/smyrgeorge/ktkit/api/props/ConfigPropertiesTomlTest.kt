@@ -138,6 +138,8 @@ class ConfigPropertiesTomlTest {
         assertEquals(100, config.database.maxConnections)
     }
 
+    // `x.y = 1` under `[a]` means a = { x = { y = 1 } }.
+    // Before: merging (even with an empty override) lost the `x.` prefix -> "Missing required property <x>".
     @Test
     fun parseMergeKeepsALoneDottedKey() {
         val base = """
@@ -150,6 +152,7 @@ class ConfigPropertiesTomlTest {
         assertEquals(DottedConfig(DottedSection(x = DottedLeaf(1))), config)
     }
 
+    // base `x.y = 1, z.y = 2` + override `z.y = 3` -> x.y = 1 (kept), z.y = 3 (overridden).
     @Test
     fun parseMergeOverridesADottedKeyAndKeepsItsSibling() {
         val base = """
@@ -168,6 +171,8 @@ class ConfigPropertiesTomlTest {
         assertEquals(DottedConfig(DottedSection(x = DottedLeaf(1), z = DottedLeaf(3))), config)
     }
 
+    // Decoding into a Map (not a class) still works after a merge:
+    // {name, env = local} + {env = prod, region} -> {name, env = prod, region}.
     @Test
     fun parseMergesIntoATopLevelMap() {
         val base = """
@@ -185,6 +190,8 @@ class ConfigPropertiesTomlTest {
         assertEquals(mapOf("name" to "base-app", "env" to "prod", "region" to "eu"), config)
     }
 
+    // base `[labels] k1, k2` + override with an empty `[labels]` -> labels stay {k1, k2}.
+    // The empty table must not leave anything behind in the merged tree.
     @Test
     fun parseMergeKeepsAMapSectionWhenTheOverrideTableIsEmpty() {
         val base = """
@@ -202,6 +209,7 @@ class ConfigPropertiesTomlTest {
         assertEquals(LabelsConfig(mapOf("k1" to "a", "k2" to "b")), config)
     }
 
+    // base with an empty `[labels]` + override `[labels] k1` -> labels = {k1}.
     @Test
     fun parseMergeFillsAMapSectionThatIsEmptyInTheBase() {
         val base = """
