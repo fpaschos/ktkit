@@ -137,4 +137,84 @@ class ConfigPropertiesTomlTest {
         assertEquals("postgresql://localhost:5432/db", config.database.url)
         assertEquals(100, config.database.maxConnections)
     }
+
+    @Test
+    fun parseMergeKeepsALoneDottedKey() {
+        val base = """
+            [a]
+            x.y = 1
+        """.trimIndent()
+
+        val config: DottedConfig = ConfigPropertiesToml.parse(base, "")
+
+        assertEquals(DottedConfig(DottedSection(x = DottedLeaf(1))), config)
+    }
+
+    @Test
+    fun parseMergeOverridesADottedKeyAndKeepsItsSibling() {
+        val base = """
+            [a]
+            x.y = 1
+            z.y = 2
+        """.trimIndent()
+
+        val override = """
+            [a]
+            z.y = 3
+        """.trimIndent()
+
+        val config: DottedConfig = ConfigPropertiesToml.parse(base, override)
+
+        assertEquals(DottedConfig(DottedSection(x = DottedLeaf(1), z = DottedLeaf(3))), config)
+    }
+
+    @Test
+    fun parseMergesIntoATopLevelMap() {
+        val base = """
+            name = "base-app"
+            env = "local"
+        """.trimIndent()
+
+        val override = """
+            env = "prod"
+            region = "eu"
+        """.trimIndent()
+
+        val config: Map<String, String> = ConfigPropertiesToml.parse(base, override)
+
+        assertEquals(mapOf("name" to "base-app", "env" to "prod", "region" to "eu"), config)
+    }
+
+    @Test
+    fun parseMergeKeepsAMapSectionWhenTheOverrideTableIsEmpty() {
+        val base = """
+            [labels]
+            k1 = "a"
+            k2 = "b"
+        """.trimIndent()
+
+        val override = """
+            [labels]
+        """.trimIndent()
+
+        val config: LabelsConfig = ConfigPropertiesToml.parse(base, override)
+
+        assertEquals(LabelsConfig(mapOf("k1" to "a", "k2" to "b")), config)
+    }
+
+    @Test
+    fun parseMergeFillsAMapSectionThatIsEmptyInTheBase() {
+        val base = """
+            [labels]
+        """.trimIndent()
+
+        val override = """
+            [labels]
+            k1 = "a"
+        """.trimIndent()
+
+        val config: LabelsConfig = ConfigPropertiesToml.parse(base, override)
+
+        assertEquals(LabelsConfig(mapOf("k1" to "a")), config)
+    }
 }
