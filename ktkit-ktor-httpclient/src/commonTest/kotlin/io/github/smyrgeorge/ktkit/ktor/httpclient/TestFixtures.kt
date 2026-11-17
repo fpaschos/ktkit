@@ -24,5 +24,5 @@ internal fun mockHttpClient(engine: MockEngine): HttpClient = HttpClient(engine)
 }
 
 /** The RFC 9457 body a ktkit service answers with. */
-internal fun apiErrorBody(status: Int, detail: String = "d", title: String = "nope") =
-    """{"type":null,"title":"$title","status":$status,"detail":"$detail","requestId":"req-7","data":null}"""
+internal fun apiErrorBody(status: Int, detail: String = "d") =
+    """{"type":null,"title":"nope","status":$status,"detail":"$detail","requestId":"req-7","data":null}"""

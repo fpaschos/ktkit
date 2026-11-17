@@ -4,9 +4,9 @@ import arrow.core.raise.Raise
 import io.github.smyrgeorge.ktkit.ktor.httpclient.HttpClientFactory
 import io.github.smyrgeorge.ktkit.ktor.httpclient.RestClientErrorSpec
 import io.github.smyrgeorge.ktkit.ktor.httpclient.RestErrorMapper
-import io.github.smyrgeorge.ktkit.ktor.httpclient.bearer
 import io.ktor.client.HttpClient
 import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.forms.FormBuilder
 import io.ktor.http.Parameters
 import io.ktor.serialization.kotlinx.json.json
@@ -30,7 +30,7 @@ class BearerRestClient(
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = get<T>(uri) {
         builder()
-        bearer(token)
+        bearerAuth(token)
     }
 
     context(_: Raise<RestClientErrorSpec>)
@@ -40,7 +40,7 @@ class BearerRestClient(
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = delete<T>(uri) {
         builder()
-        bearer(token)
+        bearerAuth(token)
     }
 
     context(_: Raise<RestClientErrorSpec>)
@@ -50,7 +50,7 @@ class BearerRestClient(
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = head<T>(uri) {
         builder()
-        bearer(token)
+        bearerAuth(token)
     }
 
     context(_: Raise<RestClientErrorSpec>)
@@ -60,7 +60,7 @@ class BearerRestClient(
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = options<T>(uri) {
         builder()
-        bearer(token)
+        bearerAuth(token)
     }
 
     context(_: Raise<RestClientErrorSpec>)
@@ -71,7 +71,7 @@ class BearerRestClient(
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = post<T, B>(uri, body) {
         builder()
-        bearer(token)
+        bearerAuth(token)
     }
 
     context(_: Raise<RestClientErrorSpec>)
@@ -82,7 +82,7 @@ class BearerRestClient(
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = put<T, B>(uri, body) {
         builder()
-        bearer(token)
+        bearerAuth(token)
     }
 
     context(_: Raise<RestClientErrorSpec>)
@@ -93,7 +93,7 @@ class BearerRestClient(
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = patch<T, B>(uri, body) {
         builder()
-        bearer(token)
+        bearerAuth(token)
     }
 
     context(_: Raise<RestClientErrorSpec>)
@@ -104,7 +104,7 @@ class BearerRestClient(
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = postMultipart<T>(uri, parts) {
         builder()
-        bearer(token)
+        bearerAuth(token)
     }
 
     context(_: Raise<RestClientErrorSpec>)
@@ -115,6 +115,6 @@ class BearerRestClient(
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = postForm<T>(uri, parameters) {
         builder()
-        bearer(token)
+        bearerAuth(token)
     }
 }

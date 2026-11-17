@@ -12,7 +12,6 @@ import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
-import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.Parameters
@@ -41,17 +40,24 @@ open class TypedRestClient<E : ErrorSpec>(
     @PublishedApi internal val baseUrl: String = "",
     @PublishedApi internal val mapper: RestErrorMapper<E, *>,
 ) {
-    /** Sends [method] to [uri] with whatever [builder] sets, and decodes the body as [T]. */
-    context(_: Raise<E>)
+    /**
+     * Sends [method] to [uri] with whatever [builder] sets, and decodes the body as [T], raising the
+     * mapped [E] at each failure point.
+     */
+    context(r: Raise<E>)
     suspend inline fun <reified T> request(
         method: HttpMethod,
         uri: String,
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
-    ): T = send {
-        client.request(baseUrl + uri) {
-            this.method = method
-            builder()
-        }
+    ): T {
+        val response = catch({
+            client.request(baseUrl + uri) {
+                this.method = method
+                builder()
+            }
+        }) { e -> r.raise(mapper.networkError(e)) }
+        if (!response.status.isSuccess()) r.raise(mapper.errorOf(response))
+        return catch({ response.body<T>() }) { e -> r.raise(mapper.parseError(e)) }
     }
 
     context(_: Raise<E>)
@@ -66,8 +72,7 @@ open class TypedRestClient<E : ErrorSpec>(
         body: B,
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = request(HttpMethod.Post, uri) {
-        contentType(ContentType.Application.Json)
-        setBody(body)
+        jsonBody(body)
         builder()
     }
 
@@ -77,10 +82,7 @@ open class TypedRestClient<E : ErrorSpec>(
         body: B? = null,
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = request(HttpMethod.Put, uri) {
-        body?.let {
-            contentType(ContentType.Application.Json)
-            setBody(body)
-        }
+        jsonBody(body)
         builder()
     }
 
@@ -90,10 +92,7 @@ open class TypedRestClient<E : ErrorSpec>(
         body: B? = null,
         crossinline builder: HttpRequestBuilder.() -> Unit = {},
     ): T = request(HttpMethod.Patch, uri) {
-        body?.let {
-            contentType(ContentType.Application.Json)
-            setBody(body)
-        }
+        jsonBody(body)
         builder()
     }
 
@@ -137,12 +136,11 @@ open class TypedRestClient<E : ErrorSpec>(
         builder()
     }
 
-    /** Runs [request] and decodes its body as [T], raising the mapped [E] at each failure point. */
+    /** Sends [body] as JSON; a `null` body sends no body and no `Content-Type`. */
     @PublishedApi
-    context(r: Raise<E>)
-    internal suspend inline fun <reified T> send(request: suspend () -> HttpResponse): T {
-        val response = catch({ request() }) { e -> r.raise(mapper.networkError(e)) }
-        if (!response.status.isSuccess()) r.raise(mapper.errorOf(response))
-        return catch({ response.body<T>() }) { e -> r.raise(mapper.parseError(e)) }
+    internal inline fun <reified B> HttpRequestBuilder.jsonBody(body: B?) {
+        if (body == null) return
+        contentType(ContentType.Application.Json)
+        setBody(body)
     }
 }

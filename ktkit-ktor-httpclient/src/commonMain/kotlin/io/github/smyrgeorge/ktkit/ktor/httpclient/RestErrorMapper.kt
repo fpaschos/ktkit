@@ -37,16 +37,10 @@ class RestErrorMapper<E : ErrorSpec, P : Any>(
     companion object {
         inline fun <E : ErrorSpec, reified P : Any> of(
             unauthorized: E? = null,
-            crossinline apiError: (P, HttpStatusCode) -> E,
-            crossinline networkError: (Throwable) -> E,
-            crossinline parseError: (Throwable) -> E,
-        ): RestErrorMapper<E, P> = RestErrorMapper(
-            payloadType = typeInfo<P>(),
-            unauthorized = unauthorized,
-            apiError = { p, s -> apiError(p, s) },
-            networkError = { networkError(it) },
-            parseError = { parseError(it) },
-        )
+            noinline apiError: (P, HttpStatusCode) -> E,
+            noinline networkError: (Throwable) -> E,
+            noinline parseError: (Throwable) -> E,
+        ): RestErrorMapper<E, P> = RestErrorMapper(typeInfo<P>(), unauthorized, apiError, networkError, parseError)
 
         /**
          * The mapper for a ktkit service: a non-2xx body is an [ApiError] and becomes a
@@ -54,7 +48,9 @@ class RestErrorMapper<E : ErrorSpec, P : Any>(
          * [RestClientErrorSpec.RestClientRequestError]; an undecodable body is a
          * [RestClientErrorSpec.RestClientDeserializationError].
          */
-        fun default(): RestErrorMapper<RestClientErrorSpec, ApiError> = of(
+        fun default(): RestErrorMapper<RestClientErrorSpec, ApiError> = DEFAULT
+
+        private val DEFAULT: RestErrorMapper<RestClientErrorSpec, ApiError> = of(
             apiError = { error, _ -> RestClientErrorSpec.RestClientReceiveError(error) },
             networkError = { RestClientErrorSpec.RestClientRequestError(it) },
             parseError = { RestClientErrorSpec.RestClientDeserializationError(it) },

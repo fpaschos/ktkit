@@ -374,8 +374,8 @@ failed call raises a typed error instead of throwing.
   (`negotiation`, kotlinx JSON by default) and a `configure` block for any other plugin.
 - `RestClient`, `BearerRestClient` and `XRealNameRestClient` are ready-made clients for ktkit services. They fail
   with `RestClientErrorSpec` and read error bodies as `ApiError`. The last two add a token-first (or `Principal`-first)
-  form of each verb that sets the `Authorization: Bearer` (or `x-real-name`) header; the helpers `bearer(token)` and
-  `xRealName(principal)` set the same headers in any `builder`.
+  form of each verb that sets the `Authorization: Bearer` (or `x-real-name`) header. In any `builder`, Ktor's
+  `bearerAuth(token)` and ktkit's `xRealName(principal)` set the same headers.
 
 Call another ktkit service:
 
